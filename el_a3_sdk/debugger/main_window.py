@@ -18,6 +18,8 @@ from debugger.widgets.diagnostics_panel import DiagnosticsPanel
 from debugger.widgets.gripper_panel import GripperPanel
 from debugger.widgets.gamepad_panel import GamepadPanel
 from debugger.widgets.viewer_3d import Viewer3DPanel
+from debugger.utils.i18n import tr
+from debugger.utils.theme_manager import ThemeManager
 
 logger = logging.getLogger("debugger")
 
@@ -29,7 +31,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, urdf_path=None, mesh_dir=None):
         super().__init__()
-        self.setWindowTitle("EL-A3 机械臂调试上位机")
+        self.setWindowTitle(tr("win.title"))
         self.setMinimumSize(1280, 800)
         self.resize(1600, 960)
 
@@ -43,6 +45,16 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._connect_signals()
 
+        tm = ThemeManager.instance()
+        tm.language_changed.connect(lambda _: self._retranslate_ui())
+        tm.theme_changed.connect(lambda _: self.viewer_3d.apply_theme())
+        tm.theme_changed.connect(
+            lambda _: self.monitoring_window.panel.apply_theme()
+        )
+        tm.theme_changed.connect(lambda _: self.diagnostics_panel.retranslate_ui())
+        tm.theme_changed.connect(lambda _: self.gripper_panel.retranslate_ui())
+        tm.theme_changed.connect(lambda _: self.gamepad_panel.retranslate_ui())
+
         QTimer.singleShot(500, self._init_3d_model)
 
     def _init_worker(self):
@@ -53,64 +65,73 @@ class MainWindow(QMainWindow):
         # --- 顶部工具栏（单行固定高度） ---
         toolbar_widget = ToolbarPanel()
         self.toolbar = toolbar_widget
-        toolbar_dock = QDockWidget("工具栏", self)
-        toolbar_dock.setWidget(toolbar_widget)
-        toolbar_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self.toolbar_dock = QDockWidget(tr("win.toolbar"), self)
+        self.toolbar_dock.setWidget(toolbar_widget)
+        self.toolbar_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         empty_title = QWidget()
         empty_title.setFixedHeight(0)
-        toolbar_dock.setTitleBarWidget(empty_title)
-        toolbar_dock.setStyleSheet("QDockWidget { border: none; }")
-        self.addDockWidget(Qt.DockWidgetArea.TopDockWidgetArea, toolbar_dock)
+        self.toolbar_dock.setTitleBarWidget(empty_title)
+        self.toolbar_dock.setStyleSheet("QDockWidget { border: none; }")
+        self.addDockWidget(Qt.DockWidgetArea.TopDockWidgetArea, self.toolbar_dock)
 
         # --- 左侧：3D 可视化 ---
         self.viewer_3d = Viewer3DPanel(
             urdf_path=self._urdf_path,
             mesh_dir=self._mesh_dir,
         )
-        viewer_dock = QDockWidget("3D 可视化", self)
-        viewer_dock.setWidget(self.viewer_3d)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, viewer_dock)
+        self.viewer_dock = QDockWidget(tr("win.viewer"), self)
+        self.viewer_dock.setWidget(self.viewer_3d)
+        self.viewer_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        _hide = QWidget(); _hide.setFixedHeight(0)
+        self.viewer_dock.setTitleBarWidget(_hide)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.viewer_dock)
 
-        # --- 右侧：功能面板 Tab（关节控制、轨迹、示教、电机诊断、夹爪） ---
-        tabs = QTabWidget()
+        # --- 右侧：功能面板 Tab ---
+        self.tabs = QTabWidget()
 
         self.joint_panel = JointControlPanel()
-        tabs.addTab(self.joint_panel, "关节控制")
+        self.tabs.addTab(self.joint_panel, tr("tab.joint"))
 
         self.trajectory_panel = TrajectoryPanel()
-        tabs.addTab(self.trajectory_panel, "轨迹控制")
+        self.tabs.addTab(self.trajectory_panel, tr("tab.trajectory"))
 
         self.teaching_panel = TeachingPanel()
-        tabs.addTab(self.teaching_panel, "示教模式")
+        self.tabs.addTab(self.teaching_panel, tr("tab.teaching"))
 
         self.diagnostics_panel = DiagnosticsPanel()
-        tabs.addTab(self.diagnostics_panel, "电机诊断")
+        self.tabs.addTab(self.diagnostics_panel, tr("tab.diagnostics"))
 
         self.gripper_panel = GripperPanel()
-        tabs.addTab(self.gripper_panel, "夹爪")
+        self.tabs.addTab(self.gripper_panel, tr("tab.gripper"))
 
         self.gamepad_panel = GamepadPanel()
-        tabs.addTab(self.gamepad_panel, "手柄")
+        self.tabs.addTab(self.gamepad_panel, tr("tab.gamepad"))
 
-        tabs_dock = QDockWidget("功能面板", self)
-        tabs_dock.setWidget(tabs)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, tabs_dock)
+        self.tabs_dock = QDockWidget(tr("win.panels"), self)
+        self.tabs_dock.setWidget(self.tabs)
+        self.tabs_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        _hide2 = QWidget(); _hide2.setFixedHeight(0)
+        self.tabs_dock.setTitleBarWidget(_hide2)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tabs_dock)
 
         # --- 底部日志 ---
         self.log_console = QTextEdit()
         self.log_console.setObjectName("logConsole")
         self.log_console.setReadOnly(True)
         self.log_console.setFixedHeight(100)
-        log_dock = QDockWidget("日志", self)
-        log_dock.setWidget(self.log_console)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
+        self.log_dock = QDockWidget(tr("win.log"), self)
+        self.log_dock.setWidget(self.log_console)
+        self.log_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        _hide3 = QWidget(); _hide3.setFixedHeight(0)
+        self.log_dock.setTitleBarWidget(_hide3)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
 
         # --- 实时监控弹出窗口（按需打开） ---
         self.monitoring_window = MonitoringWindow(self.worker.data_buffer, parent=self)
 
-        self.statusBar().showMessage("就绪")
+        self.statusBar().showMessage(tr("win.ready"))
 
-        QTimer.singleShot(0, lambda: self._adjust_dock_sizes(viewer_dock, tabs_dock))
+        QTimer.singleShot(0, lambda: self._adjust_dock_sizes(self.viewer_dock, self.tabs_dock))
 
     def _connect_signals(self):
         tb = self.toolbar
@@ -126,6 +147,7 @@ class MainWindow(QMainWindow):
         self.worker.connected_changed.connect(tb.set_connected)
         self.worker.enabled_changed.connect(tb.set_enabled)
         self.worker.enabled_changed.connect(self.joint_panel.set_enabled)
+        self.worker.enabled_changed.connect(self.viewer_3d.set_enabled)
         self.worker.error_occurred.connect(self._on_error)
         self.worker.log_message.connect(self._append_log)
         self.worker.can_fps_updated.connect(tb.set_fps)
@@ -194,8 +216,38 @@ class MainWindow(QMainWindow):
         )
         self.worker.motor_scan_result.connect(diag.update_scan_result)
 
+        tp.drag_mode_toggled.connect(self.viewer_3d.set_drag_mode)
+        tp.sync_feedback_requested.connect(self.viewer_3d.sync_to_feedback)
+        self.viewer_3d.drag_angles_changed.connect(tp.update_drag_angles)
+
         self.gamepad_panel.gamepad_log.connect(self._append_log)
         self.worker.connected_changed.connect(self._on_connected_for_gamepad)
+
+    # ---- retranslate ----
+
+    def _retranslate_ui(self):
+        self.setWindowTitle(tr("win.title"))
+        self.toolbar_dock.setWindowTitle(tr("win.toolbar"))
+        self.viewer_dock.setWindowTitle(tr("win.viewer"))
+        self.tabs_dock.setWindowTitle(tr("win.panels"))
+        self.log_dock.setWindowTitle(tr("win.log"))
+        self.statusBar().showMessage(tr("win.ready"))
+
+        self.tabs.setTabText(0, tr("tab.joint"))
+        self.tabs.setTabText(1, tr("tab.trajectory"))
+        self.tabs.setTabText(2, tr("tab.teaching"))
+        self.tabs.setTabText(3, tr("tab.diagnostics"))
+        self.tabs.setTabText(4, tr("tab.gripper"))
+        self.tabs.setTabText(5, tr("tab.gamepad"))
+
+        for panel in (self.toolbar, self.joint_panel, self.trajectory_panel,
+                      self.teaching_panel, self.diagnostics_panel,
+                      self.gripper_panel, self.gamepad_panel, self.viewer_3d):
+            if hasattr(panel, "retranslate_ui"):
+                panel.retranslate_ui()
+        self.monitoring_window.retranslate_ui()
+
+    # ---- helpers ----
 
     def _adjust_dock_sizes(self, viewer_dock, tabs_dock):
         w = self.width()
@@ -220,8 +272,8 @@ class MainWindow(QMainWindow):
         elif not connected:
             self.gamepad_panel.set_arm(None)
 
-    def _on_connect(self, can_name: str):
-        self.worker.submit_command("connect", can_name)
+    def _on_connect(self, can_name: str, connect_kwargs: dict):
+        self.worker.submit_command("connect", can_name, **connect_kwargs)
 
     def _on_joints_updated(self, joint_states):
         self._last_joint_states = joint_states
@@ -245,7 +297,7 @@ class MainWindow(QMainWindow):
 
     def _on_error(self, msg: str):
         self.toolbar.set_error(msg)
-        self._append_log(f"[错误] {msg}")
+        self._append_log(tr("win.error", msg=msg))
 
     def _append_log(self, msg: str):
         timestamp = time.strftime("%H:%M:%S")
@@ -256,12 +308,12 @@ class MainWindow(QMainWindow):
     def _init_3d_model(self):
         success = self.viewer_3d.initialize_model()
         if success:
-            self._append_log("3D 模型加载成功")
+            self._append_log(tr("win.model_ok"))
         else:
-            self._append_log("3D 模型加载失败（检查 URDF 和 mesh 路径）")
+            self._append_log(tr("win.model_fail"))
 
     def closeEvent(self, event):
-        self._append_log("正在关闭...")
+        self._append_log(tr("win.closing"))
         self.gamepad_panel.cleanup()
         if self.monitoring_window.isVisible():
             self.monitoring_window.close()
