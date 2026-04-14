@@ -39,6 +39,7 @@ class DiagnosticsPanel(QWidget):
     write_param_requested = pyqtSignal(int, int, float)  # motor_id, param_index, value
     set_zero_requested = pyqtSignal(int)  # motor_num
     verify_zero_sta_requested = pyqtSignal()
+    set_all_zero_sta_requested = pyqtSignal()
     scan_motors_requested = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -157,6 +158,13 @@ class DiagnosticsPanel(QWidget):
         self.verify_btn = QPushButton()
         self.verify_btn.clicked.connect(self.verify_zero_sta_requested.emit)
         verify_row.addWidget(self.verify_btn)
+
+        self.set_all_zero_sta_btn = QPushButton()
+        self.set_all_zero_sta_btn.setMinimumWidth(120)
+        self.set_all_zero_sta_btn.clicked.connect(
+            self.set_all_zero_sta_requested.emit)
+        verify_row.addWidget(self.set_all_zero_sta_btn)
+
         self.verify_status = QLabel()
         self.verify_status.setStyleSheet("font-weight: bold;")
         verify_row.addWidget(self.verify_status)
@@ -249,6 +257,8 @@ class DiagnosticsPanel(QWidget):
         self.verify_group.setTitle(tr("diag.verify_group"))
         self.verify_btn.setText(tr("diag.verify_btn"))
         self.verify_btn.setToolTip(tr("diag.verify_tip"))
+        self.set_all_zero_sta_btn.setText(tr("diag.set_all_zero_sta"))
+        self.set_all_zero_sta_btn.setToolTip(tr("diag.set_all_zero_sta_tip"))
         for i, lbl in enumerate(self._verify_motor_labels):
             lbl.setText(tr("diag.motor_n", n=i + 1))
         self.op_group.setTitle(tr("diag.op_group"))

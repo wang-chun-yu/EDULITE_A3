@@ -210,6 +210,9 @@ class MainWindow(QMainWindow):
         diag.verify_zero_sta_requested.connect(
             lambda: self.worker.submit_command("verify_zero_sta")
         )
+        diag.set_all_zero_sta_requested.connect(
+            lambda: self.worker.submit_command("set_all_zero_sta")
+        )
         self.worker.zero_sta_verified.connect(diag.update_zero_sta_result)
         diag.scan_motors_requested.connect(
             lambda: self.worker.submit_command("scan_motors")
@@ -219,6 +222,19 @@ class MainWindow(QMainWindow):
         tp.drag_mode_toggled.connect(self.viewer_3d.set_drag_mode)
         tp.sync_feedback_requested.connect(self.viewer_3d.sync_to_feedback)
         self.viewer_3d.drag_angles_changed.connect(tp.update_drag_angles)
+
+        self.viewer_3d.home_position_requested.connect(
+            lambda: self.worker.submit_command("move_j", [0.0] * 6, 3.0)
+        )
+
+        # --- Calibration panel ---
+        calib = self.teaching_panel.calibration_panel
+        calib.move_j_requested.connect(
+            lambda pos, dur, block: self.worker.submit_command(
+                "move_j_block" if block else "move_j", pos, dur
+            )
+        )
+        self.worker.move_j_done.connect(calib.notify_move_done)
 
         self.gamepad_panel.gamepad_log.connect(self._append_log)
         self.worker.connected_changed.connect(self._on_connected_for_gamepad)
@@ -280,6 +296,9 @@ class MainWindow(QMainWindow):
         self.teaching_panel.update_positions(joint_states)
         self.trajectory_panel.update_current_positions(joint_states)
 
+        positions = joint_states.to_list(include_gripper=False)
+        self.teaching_panel.calibration_panel.feed_positions(positions)
+
         now = time.monotonic()
         if now - self._last_ui_update_time < self.UI_UPDATE_INTERVAL_S:
             return
@@ -294,6 +313,8 @@ class MainWindow(QMainWindow):
 
     def _on_efforts_updated(self, effort_states):
         self._last_effort_states = effort_states
+        efforts = effort_states.to_list(include_gripper=False)
+        self.teaching_panel.calibration_panel.feed_efforts(efforts)
 
     def _on_error(self, msg: str):
         self.toolbar.set_error(msg)

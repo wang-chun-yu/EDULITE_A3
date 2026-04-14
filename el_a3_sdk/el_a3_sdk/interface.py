@@ -309,7 +309,7 @@ class ELA3Interface:
         time.sleep(0.1)
 
         fb_ok = False
-        for attempt in range(3):
+        for attempt in range(10):
             js = self.GetArmJointMsgs()
             if js is not None and js.timestamp > 0:
                 fb = js.to_list()
@@ -321,9 +321,15 @@ class ELA3Interface:
                             [f"{v:.3f}" for v in fb[:self.NUM_ARM_JOINTS]])
                 fb_ok = True
                 break
-            time.sleep(0.05)
+            time.sleep(0.03)
         if not fb_ok:
-            logger.warning("无法获取电机反馈，_target_positions 使用默认值 [0]*6")
+            fallback = self._read_feedback_positions()
+            with self._cmd_lock:
+                for i in range(self.NUM_ARM_JOINTS):
+                    self._target_positions[i] = fallback[i]
+                    self._gravity_input_positions[i] = fallback[i]
+            logger.warning("GetArmJointMsgs 失败，使用单电机反馈: %s",
+                           [f"{v:.3f}" for v in fallback])
 
         self._control_running = True
         self._control_thread = threading.Thread(
@@ -414,8 +420,17 @@ class ELA3Interface:
         if first_cmd:
             with self._state_lock:
                 self._first_command = False
+            fb_positions = self._read_feedback_positions()
+            for i in range(self.NUM_ARM_JOINTS):
+                if abs(target_positions[i] - fb_positions[i]) > 0.5:
+                    logger.warning(
+                        "关节 %d 目标 %.3f 与反馈 %.3f 偏差过大，使用反馈值",
+                        i + 1, target_positions[i], fb_positions[i])
+                    target_positions[i] = fb_positions[i]
             self._last_cmd_positions = list(target_positions)
             self._gravity_input_positions = list(target_positions)
+            with self._cmd_lock:
+                self._target_positions = list(target_positions)
 
         # --- Gravity computation (EMA-smoothed, every tick) ---
         if zero_torque:
@@ -616,10 +631,6 @@ class ELA3Interface:
                 time.sleep(0.005)
             elif actual_mode == RunMode.MOTION_CONTROL:
                 self._driver.write_parameter(mid, ParamIndex.CAN_TIMEOUT, 0.0)
-                time.sleep(0.005)
-                fb = self._driver.get_feedback(mid)
-                init_pos = fb.position if (fb and fb.is_valid) else 0.0
-                self._driver.send_motion_control(mid, init_pos, 0.0, 5.0, startup_kd, 0.0)
 
             logger.info("电机 %d 已使能 (mode=%s)", mid, actual_mode.name)
             time.sleep(0.03)
@@ -1162,6 +1173,10 @@ class ELA3Interface:
 
     def WriteMotorParameter(self, motor_id: int, param_index: int, value: float) -> bool:
         return self._driver.write_parameter(motor_id, param_index, value)
+
+    def WriteMotorParameterInt(self, motor_id: int, param_index: int, value: int) -> bool:
+        """写入整数类型参数（uint8/uint16/uint32）"""
+        return self._driver.write_parameter_int(motor_id, param_index, value)
 
     def GetMotorVoltage(self, motor_id: int) -> Optional[float]:
         result = self._driver.read_parameter(motor_id, ParamIndex.VBUS, timeout=0.3)

@@ -1,5 +1,6 @@
 """后台工作线程：封装 ELA3Interface，50Hz 数据采集 + 线程安全命令队列"""
 
+import sys
 import os
 import time
 import math
@@ -45,6 +46,7 @@ class ArmWorker(QThread):
     can_fps_updated = pyqtSignal(float)
     zero_sta_verified = pyqtSignal(list)
     motor_scan_result = pyqtSignal(list)
+    move_j_done = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -140,6 +142,8 @@ class ArmWorker(QThread):
             self._do_set_zero(*args)
         elif cmd == "verify_zero_sta":
             self._do_verify_zero_sta()
+        elif cmd == "set_all_zero_sta":
+            self._do_set_all_zero_sta()
         elif cmd == "scan_motors":
             self._do_scan_motors()
         elif cmd == "read_motor_param":
@@ -150,6 +154,8 @@ class ArmWorker(QThread):
             self._do_start_control_loop(*args)
         elif cmd == "stop_control_loop":
             self._do_stop_control_loop()
+        elif cmd == "move_j_block":
+            self._do_move_j_block(*args, **kwargs)
         elif cmd == "set_smoothing_alpha":
             if self.arm and not self._sim_mode:
                 self.arm.SetSmoothingAlpha(args[0])
@@ -179,7 +185,7 @@ class ArmWorker(QThread):
                 return
 
         try:
-            sdk_root = Path(__file__).parent.parent.parent
+            sdk_root = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent.parent.parent
             inertia_path = sdk_root / "resources" / "config" / "inertia_params.yaml"
             kwargs = dict(can_name=can_name)
             if inertia_path.exists():
@@ -198,6 +204,7 @@ class ArmWorker(QThread):
             display_name = f"{serial_port or can_name} (SLCAN)" if backend == "slcan" else can_name
             self.log_message.emit(f"已连接到 {display_name}")
         except Exception as e:
+            self.arm = None
             self.error_occurred.emit(f"连接失败: {e}")
 
     def _do_disconnect(self):
@@ -295,6 +302,19 @@ class ArmWorker(QThread):
             self.arm.MoveJ(positions, duration=duration, block=block)
             self.log_message.emit(f"MoveJ 执行中 duration={duration}s")
 
+    def _do_move_j_block(self, positions, duration=2.0):
+        """阻塞式 MoveJ，完成后发出 move_j_done 信号（供标定流程使用）。"""
+        if self._sim_mode:
+            self._sim_target = list(positions[:7]) + [0.0] * (7 - len(positions))
+            import time as _t
+            _t.sleep(min(duration, 2.0))
+            self.move_j_done.emit()
+            return
+        if self.arm and self._enabled:
+            self._ensure_control_loop()
+            self.arm.MoveJ(positions, duration=duration, block=True)
+            self.move_j_done.emit()
+
     def _do_move_l(self, target_pose, duration=2.0, block=False):
         if self._sim_mode:
             self.log_message.emit(f"MoveL 执行（模拟）duration={duration}s")
@@ -387,6 +407,34 @@ class ArmWorker(QThread):
             self.log_message.emit("ZERO_STA 校验完成: 全部通过")
         else:
             self.log_message.emit("ZERO_STA 校验完成: 存在异常")
+
+    def _do_set_all_zero_sta(self):
+        from el_a3_sdk.protocol import ParamIndex
+        if self._sim_mode:
+            self.log_message.emit("一键设置 ZERO_STA=1（模拟）")
+            return
+        if not self.arm or not self._connected:
+            self.log_message.emit("未连接，无法设置 ZERO_STA")
+            return
+        self.log_message.emit("开始设置全部电机 ZERO_STA=1 ...")
+        fail_count = 0
+        for mid in range(1, 8):
+            ok = self.arm.WriteMotorParameterInt(mid, ParamIndex.ZERO_STA, 1)
+            if ok:
+                self.log_message.emit(f"  电机{mid} ZERO_STA 已设置为 1")
+            else:
+                self.log_message.emit(f"  电机{mid} ZERO_STA 设置失败")
+                fail_count += 1
+        if fail_count == 0:
+            self.log_message.emit("全部电机 ZERO_STA 设置完成，保存参数到 Flash ...")
+            import time as _t
+            _t.sleep(0.05)
+            self.arm.SaveParameters(0xFF)
+            self.log_message.emit("参数已保存")
+        else:
+            self.log_message.emit(
+                f"ZERO_STA 设置完成: {fail_count} 个电机失败，跳过保存")
+        self._do_verify_zero_sta()
 
     def _do_scan_motors(self):
         results = []

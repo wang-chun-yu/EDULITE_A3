@@ -1,21 +1,22 @@
-"""示教面板：零力矩模式 + 轨迹录制/回放"""
+"""示教面板：内嵌 Tab — 示教（零力矩 + 录制）+ 标定"""
 
 import math
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QDoubleSpinBox, QPushButton, QGroupBox,
-    QListWidget, QFileDialog, QCheckBox,
+    QListWidget, QFileDialog, QCheckBox, QTabWidget,
 )
 from PyQt6.QtCore import pyqtSignal, QTimer
 
 from debugger.backend.trajectory_recorder import TrajectoryRecorder
+from debugger.widgets.calibration_panel import CalibrationPanel
 from debugger.utils.i18n import tr
 from debugger.utils.theme_manager import ThemeManager
 from debugger.utils.style import SCENE_COLORS
 
 
 class TeachingPanel(QWidget):
-    """示教模式：零力矩拖动 + 轨迹录制回放"""
+    """示教模式：零力矩拖动 + 轨迹录制回放 + 标定"""
 
     zero_torque_requested = pyqtSignal(bool)
     zero_torque_gravity_requested = pyqtSignal(bool)
@@ -26,11 +27,28 @@ class TeachingPanel(QWidget):
         self.recorder = TrajectoryRecorder(sample_rate_hz=10.0)
         self._zero_torque_active = False
         self._current_positions = [0.0] * 7
-        self._rec_complete_info = None  # (n, t) after recording stops, else None
+        self._rec_complete_info = None
         self._init_ui()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._tabs = QTabWidget()
+        outer.addWidget(self._tabs)
+
+        self._teaching_content = QWidget()
+        self._build_teaching_tab(self._teaching_content)
+        self._tabs.addTab(self._teaching_content, tr("teach.tab_teaching"))
+
+        self.calibration_panel = CalibrationPanel()
+        self._tabs.addTab(self.calibration_panel, tr("teach.tab_calibration"))
+
+        self._rec_timer = QTimer(self)
+        self._rec_timer.timeout.connect(self._sample_position)
+
+    def _build_teaching_tab(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
         layout.setContentsMargins(4, 4, 4, 4)
 
         self.zt_group = QGroupBox(tr("teach.zt_group"))
@@ -102,10 +120,10 @@ class TeachingPanel(QWidget):
         self.traj_group.setLayout(traj_layout)
         layout.addWidget(self.traj_group)
 
-        self._rec_timer = QTimer(self)
-        self._rec_timer.timeout.connect(self._sample_position)
-
     def retranslate_ui(self):
+        self._tabs.setTabText(0, tr("teach.tab_teaching"))
+        self._tabs.setTabText(1, tr("teach.tab_calibration"))
+
         self.zt_group.setTitle(tr("teach.zt_group"))
         self.gravity_check.setText(tr("teach.gravity"))
         if self._zero_torque_active:
@@ -124,6 +142,8 @@ class TeachingPanel(QWidget):
         self.save_btn.setText(tr("teach.save"))
         self.load_btn.setText(tr("teach.load"))
         self.del_btn.setText(tr("teach.delete"))
+
+        self.calibration_panel.retranslate_ui()
 
     def _refresh_rec_status_text(self):
         if self.recorder.is_recording:

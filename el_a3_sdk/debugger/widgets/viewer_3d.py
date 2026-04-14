@@ -1,5 +1,6 @@
 """3D URDF 可视化面板 (PyVistaQt) — 含单关节拖拽控制"""
 
+import sys
 import math
 import time
 import numpy as np
@@ -9,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, QPushButton,
-    QApplication, QSizePolicy,
+    QApplication, QSizePolicy, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QEvent, pyqtSignal
 from PyQt6.QtGui import QCursor
@@ -21,9 +22,9 @@ try:
     from pyvistaqt import QtInteractor
     from vtkmodules.vtkRenderingCore import vtkCellPicker
     HAS_PYVISTA = True
-except ImportError:
+except Exception as _exc:
     HAS_PYVISTA = False
-    logger.warning("pyvista / pyvistaqt 未安装，3D 可视化不可用")
+    logger.warning("pyvista / pyvistaqt 不可用，3D 可视化已禁用: %s", _exc)
 
 from debugger.utils.urdf_loader import UrdfModel, _make_transform
 from debugger.utils.joint_drag_controls import JointDragController
@@ -31,8 +32,16 @@ from debugger.utils.i18n import tr
 from debugger.utils.theme_manager import ThemeManager
 from debugger.utils.style import SCENE_COLORS
 
-URDF_PATH = Path(__file__).parent.parent.parent / "resources" / "urdf" / "el_a3.urdf"
-MESH_DIR = Path(__file__).parent.parent.parent.parent / "el_a3_ros" / "el_a3_description" / "meshes"
+def _get_base_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent.parent
+
+URDF_PATH = _get_base_path() / "resources" / "urdf" / "el_a3.urdf"
+if getattr(sys, "frozen", False):
+    MESH_DIR = _get_base_path() / "resources" / "meshes"
+else:
+    MESH_DIR = Path(__file__).parent.parent.parent.parent / "el_a3_ros" / "el_a3_description" / "meshes"
 
 JOINT_NAMES_ORDERED = [
     "L1_joint", "L2_joint", "L3_joint",
@@ -55,6 +64,7 @@ class Viewer3DPanel(QWidget):
     """3D URDF 实时可视化 + 单关节拖拽"""
 
     drag_angles_changed = pyqtSignal(dict)
+    home_position_requested = pyqtSignal()
 
     def __init__(self, parent=None, urdf_path=None, mesh_dir=None):
         super().__init__(parent)
@@ -105,11 +115,10 @@ class Viewer3DPanel(QWidget):
         self._reset_btn.clicked.connect(self._reset_view)
         row1.addWidget(self._reset_btn)
 
-        self._wireframe_btn = QPushButton(tr("v3d.wireframe"))
-        self._wireframe_btn.setSizePolicy(_btn_sp())
-        self._wireframe_btn.setCheckable(True)
-        self._wireframe_btn.clicked.connect(self._toggle_wireframe)
-        row1.addWidget(self._wireframe_btn)
+        self._home_btn = QPushButton(tr("v3d.home_model"))
+        self._home_btn.setSizePolicy(_btn_sp())
+        self._home_btn.clicked.connect(self._on_home_clicked)
+        row1.addWidget(self._home_btn)
 
         row1.addStretch()
         layout.addLayout(row1)
@@ -159,8 +168,8 @@ class Viewer3DPanel(QWidget):
     def retranslate_ui(self):
         if hasattr(self, '_reset_btn'):
             self._reset_btn.setText(tr("v3d.reset"))
-        if hasattr(self, '_wireframe_btn'):
-            self._wireframe_btn.setText(tr("v3d.wireframe"))
+        if hasattr(self, '_home_btn'):
+            self._home_btn.setText(tr("v3d.home_model"))
 
     # ==================================================================
     # 模型加载
@@ -571,23 +580,35 @@ class Viewer3DPanel(QWidget):
                 (0.0, 0.0, 1.0),
             ]
 
-    def _toggle_wireframe(self, checked):
-        if not self._plotter:
-            return
-        for actor_entries in self._link_actors.values():
-            for actor, *_ in actor_entries:
-                try:
-                    if hasattr(actor, 'GetProperty'):
-                        if checked:
-                            actor.GetProperty().SetRepresentationToWireframe()
-                        else:
-                            actor.GetProperty().SetRepresentationToSurface()
-                except Exception:
-                    pass
-        try:
-            self._plotter.render()
-        except Exception:
-            pass
+    # ==================================================================
+    # 模型回正
+    # ==================================================================
+
+    def _on_home_clicked(self):
+        """弹出对话框让用户选择回正方式。"""
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("v3d.home_confirm"))
+        box.setText(tr("v3d.home_confirm"))
+        btn_3d = box.addButton(tr("v3d.home_3d_only"), QMessageBox.ButtonRole.AcceptRole)
+        btn_real = box.addButton(tr("v3d.home_real"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked == btn_3d:
+            self._home_model_3d()
+        elif clicked == btn_real:
+            self._home_model_3d()
+            self.home_position_requested.emit()
+
+    def _home_model_3d(self):
+        """将 3D 模型所有关节归零并刷新渲染。"""
+        for name in JOINT_NAMES_ORDERED:
+            self._current_angles[name] = 0.0
+        self._render_pose(self._current_angles)
+        if self._drag_ctrl:
+            self._drag_ctrl.sync_from_feedback(self._current_angles)
+        self._status_label.setText(tr("v3d.home_done"))
 
     def closeEvent(self, event):
         self._remove_event_filter()
