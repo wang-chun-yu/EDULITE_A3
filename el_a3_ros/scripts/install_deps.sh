@@ -29,7 +29,8 @@ apt install -y \
     ros-humble-xacro \
     ros-humble-robot-state-publisher \
     ros-humble-joint-state-publisher-gui \
-    ros-humble-rviz2
+    ros-humble-rviz2 \
+    ros-humble-pinocchio
 
 # CAN tools
 apt install -y can-utils
